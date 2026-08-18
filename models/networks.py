@@ -214,11 +214,11 @@ class CompositeGenerator(BaseNetwork):
             flow = self.model_final_flow(flow_feat) * 20
             weight = self.model_final_w(flow_feat)  
 
-        gpu_id = img_feat.device
+        device = img_feat.device
         if use_raw_only or self.no_flow:
             img_final = img_raw
         else:
-            img_warp = self.resample(img_prev[:,-3:,...].to(gpu_id), flow).to(gpu_id)        
+            img_warp = self.resample(img_prev[:,-3:,...].to(device), flow).to(device)        
             weight_ = weight.expand_as(img_raw)
             img_final = img_raw * weight_ + img_warp * (1-weight_)
         
@@ -227,7 +227,7 @@ class CompositeGenerator(BaseNetwork):
             img_fg_feat = self.indv_up(self.indv_res(self.indv_down(input)))
             img_fg = self.indv_final(img_fg_feat)
 
-            mask = mask.to(gpu_id).expand_as(img_raw)            
+            mask = mask.to(device).expand_as(img_raw)            
             img_final = img_fg * mask + img_final * (1-mask) 
             img_raw = img_fg * mask + img_raw * (1-mask)                 
 
@@ -308,11 +308,11 @@ class CompositeLocalGenerator(BaseNetwork):
             flow = self.model_final_flow(flow_feat) * flow_multiplier
             weight = self.model_final_w(flow_feat)
 
-        gpu_id = img_feat.device
+        device = img_feat.device
         if use_raw_only or self.no_flow:
             img_final = img_raw
         else:                                    
-            img_warp = self.resample(img_prev[:,-3:,...].to(gpu_id), flow).to(gpu_id)
+            img_warp = self.resample(img_prev[:,-3:,...].to(device), flow).to(device)
             weight_ = weight.expand_as(img_raw)
             img_final = img_raw * weight_ + img_warp * (1-weight_)
 
@@ -320,7 +320,7 @@ class CompositeLocalGenerator(BaseNetwork):
         if self.use_fg_model:
             img_fg_feat = self.indv_up(self.indv_down(input) + img_fg_feat_coarse)        
             img_fg = self.indv_final(img_fg_feat)
-            mask = mask.to(gpu_id).expand_as(img_raw)
+            mask = mask.to(device).expand_as(img_raw)
             img_final = img_fg * mask + img_final * (1-mask)
             img_raw = img_fg * mask + img_raw * (1-mask)         
 

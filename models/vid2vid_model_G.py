@@ -141,7 +141,7 @@ class Vid2VidModelG(BaseModel):
         n_frames_load = self.n_frames_load
         n_scales = self.n_scales
         finetune_all = self.finetune_all
-        dest_id = self.gpu_ids[0] if self.split_gpus else start_gpu        
+        dest_id = torch.device('cuda', self.gpu_ids[0]) if self.split_gpus else start_gpu        
 
         ### generate inputs   
         real_A_pyr = self.build_pyr(real_A_all)        
@@ -149,8 +149,13 @@ class Vid2VidModelG(BaseModel):
         
         ### sequentially generate each frame
         for t in range(n_frames_load):
-            gpu_id = (t // self.n_frames_per_gpu + start_gpu) if self.split_gpus else start_gpu # the device where we generate this frame
-            net_id = gpu_id if self.split_gpus else 0                                           # the idx where the net is located
+            if self.split_gpus:
+                gpu_idx = t // self.n_frames_per_gpu + start_gpu  # integer GPU index for split-GPU mode
+                gpu_id = torch.device('cuda', gpu_idx)             # device for tensor placement
+                net_id = gpu_idx                                   # list index for the replicated network
+            else:
+                gpu_id = start_gpu  # torch.device (CPU or single GPU)
+                net_id = 0
             fake_B_feat = flow_feat = fake_B_fg_feat = None
 
             # coarse-to-fine approach
