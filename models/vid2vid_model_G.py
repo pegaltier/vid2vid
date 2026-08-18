@@ -20,12 +20,12 @@ class Vid2VidModelG(BaseModel):
         BaseModel.initialize(self, opt)
         self.isTrain = opt.isTrain        
         if not opt.debug:
-            torch.backends.cudnn.benchmark = True       
+            torch.backends.cudnn.benchmark = bool(opt.gpu_ids)       
         
         # define net G                        
         self.n_scales = opt.n_scales_spatial        
         self.use_single_G = opt.use_single_G
-        self.split_gpus = (self.opt.n_gpus_gen < len(self.opt.gpu_ids)) and (self.opt.batchSize == 1)
+        self.split_gpus = (self.opt.n_gpus_gen < len(self.opt.gpu_ids)) and (self.opt.batchSize == 1) and bool(self.opt.gpu_ids)
 
         input_nc = opt.label_nc if opt.label_nc != 0 else opt.input_nc
         netG_input_nc = input_nc * opt.n_frames_G
@@ -54,7 +54,7 @@ class Vid2VidModelG(BaseModel):
         
         # define training variables
         if self.isTrain:            
-            self.n_gpus = self.opt.n_gpus_gen if self.opt.batchSize == 1 else 1    # number of gpus for running generator            
+            self.n_gpus = max(1, self.opt.n_gpus_gen) if self.opt.batchSize == 1 else 1    # number of devices for running generator            
             self.n_frames_bp = 1                                                   # number of frames to backpropagate the loss            
             self.n_frames_per_gpu = min(self.opt.max_frames_per_gpu, self.opt.n_frames_total // self.n_gpus) # number of frames in each GPU
             self.n_frames_load = self.n_gpus * self.n_frames_per_gpu   # number of frames in all GPUs            
@@ -87,34 +87,34 @@ class Vid2VidModelG(BaseModel):
         size = input_map.size()
         self.bs, tG, self.height, self.width = size[0], size[1], size[3], size[4]
         
-        input_map = input_map.data.cuda()                
+        input_map = input_map.data.to(self.device)                
         if self.opt.label_nc != 0:                        
             # create one-hot vector for label map             
             oneHot_size = (self.bs, tG, self.opt.label_nc, self.height, self.width)
-            input_label = torch.cuda.FloatTensor(torch.Size(oneHot_size)).zero_()
+            input_label = torch.zeros(torch.Size(oneHot_size), device=self.device)
             input_label = input_label.scatter_(2, input_map.long(), 1.0)    
             input_map = input_label        
         input_map = Variable(input_map)
                 
         if self.opt.use_instance:
-            inst_map = inst_map.data.cuda()            
+            inst_map = inst_map.data.to(self.device)            
             edge_map = Variable(self.get_edges(inst_map))            
             input_map = torch.cat([input_map, edge_map], dim=2)
         
         pool_map = None
         if self.opt.dataset_mode == 'face':
-            pool_map = inst_map.data.cuda()
+            pool_map = inst_map.data.to(self.device)
         
         # real images for training
         if real_image is not None:
-            real_image = Variable(real_image.data.cuda())   
+            real_image = Variable(real_image.data.to(self.device))   
 
         return input_map, real_image, pool_map
 
     def forward(self, input_A, input_B, inst_A, fake_B_prev, dummy_bs=0):
         tG = self.opt.n_frames_G           
         gpu_split_id = self.opt.n_gpus_gen + 1        
-        if input_A.get_device() == self.gpu_ids[0]:
+        if not self.gpu_ids or input_A.get_device() == self.gpu_ids[0]:
             input_A, input_B, inst_A, fake_B_prev = util.remove_dummy_from_tensor([input_A, input_B, inst_A, fake_B_prev], dummy_bs)
             if input_A.size(0) == 0: return self.return_dummy(input_A)
         real_A_all, real_B_all, _ = self.encode_input(input_A, input_B, inst_A)        
@@ -129,7 +129,7 @@ class Vid2VidModelG(BaseModel):
             netG_s = torch.nn.parallel.replicate(netG_s, self.opt.gpu_ids[:gpu_split_id]) if self.split_gpus else [netG_s]
             netG.append(netG_s)
 
-        start_gpu = self.gpu_ids[1] if self.split_gpus else real_A_all.get_device()        
+        start_gpu = self.gpu_ids[1] if self.split_gpus else real_A_all.device        
         fake_B, fake_B_raw, flow, weight = self.generate_frame_train(netG, real_A_all, fake_B_prev, start_gpu, is_first_frame)        
         fake_B_prev = [B[:, -tG+1:].detach() for B in fake_B]
         fake_B = [B[:, tG-1:] for B in fake_B]
@@ -149,8 +149,8 @@ class Vid2VidModelG(BaseModel):
         
         ### sequentially generate each frame
         for t in range(n_frames_load):
-            gpu_id = (t // self.n_frames_per_gpu + start_gpu) if self.split_gpus else start_gpu # the GPU idx where we generate this frame
-            net_id = gpu_id if self.split_gpus else 0                                           # the GPU idx where the net is located
+            gpu_id = (t // self.n_frames_per_gpu + start_gpu) if self.split_gpus else start_gpu # the device where we generate this frame
+            net_id = gpu_id if self.split_gpus else 0                                           # the idx where the net is located
             fake_B_feat = flow_feat = fake_B_fg_feat = None
 
             # coarse-to-fine approach
@@ -160,10 +160,10 @@ class Vid2VidModelG(BaseModel):
                 # 1. input labels
                 real_As = real_A_pyr[si]
                 _, _, _, h, w = real_As.size()                  
-                real_As_reshaped = real_As[:, t:t+tG,...].view(self.bs, -1, h, w).cuda(gpu_id)              
+                real_As_reshaped = real_As[:, t:t+tG,...].view(self.bs, -1, h, w).to(gpu_id)              
 
                 # 2. previous fake_Bs                
-                fake_B_prevs = fake_B_pyr[si][:, t:t+tG-1,...].cuda(gpu_id)
+                fake_B_prevs = fake_B_pyr[si][:, t:t+tG-1,...].to(gpu_id)
                 if (t % self.n_frames_bp) == 0:
                     fake_B_prevs = fake_B_prevs.detach()
                 fake_B_prevs_reshaped = fake_B_prevs.view(self.bs, -1, h, w)
@@ -186,12 +186,12 @@ class Vid2VidModelG(BaseModel):
                         fake_B_fg_feat = fake_B_fg_feat.detach()
                 
                 # collect results into a sequence
-                fake_B_pyr[si] = self.concat([fake_B_pyr[si], fake_B.unsqueeze(1).cuda(dest_id)], dim=1)                                
+                fake_B_pyr[si] = self.concat([fake_B_pyr[si], fake_B.unsqueeze(1).to(dest_id)], dim=1)                                
                 if s == n_scales-1:                    
-                    fake_Bs_raw = self.concat([fake_Bs_raw, fake_B_raw.unsqueeze(1).cuda(dest_id)], dim=1)
+                    fake_Bs_raw = self.concat([fake_Bs_raw, fake_B_raw.unsqueeze(1).to(dest_id)], dim=1)
                     if flow is not None:
-                        flows = self.concat([flows, flow.unsqueeze(1).cuda(dest_id)], dim=1)
-                        weights = self.concat([weights, weight.unsqueeze(1).cuda(dest_id)], dim=1)                        
+                        flows = self.concat([flows, flow.unsqueeze(1).to(dest_id)], dim=1)
+                        weights = self.concat([weights, weight.unsqueeze(1).to(dest_id)], dim=1)                        
         
         return fake_B_pyr, fake_Bs_raw, flows, weights
 
@@ -307,7 +307,7 @@ class Vid2VidModelG(BaseModel):
                 feat_ori[label,k] = float(feat_map[idx[0,0], idx[0,1] + k, idx[0,2], idx[0,3]])
                 for m in range(num_images):
                     feat_ref[label,k,m] = features[label][m,k]                
-        cluster_idx = self.dists_min(feat_ori.expand_as(feat_ref).cuda(), feat_ref.cuda(), num=1)
+        cluster_idx = self.dists_min(feat_ori.expand_as(feat_ref).to(self.device), feat_ref.to(self.device), num=1)
 
         # construct new feature map from nearest neighbors
         feat_map = self.Tensor(inst.size()[0], self.opt.feat_num, inst.size()[2], inst.size()[3])

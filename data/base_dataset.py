@@ -179,7 +179,7 @@ def get_video_params(opt, n_frames_total, cur_seq_len, index):
     if opt.isTrain:        
         n_frames_total = min(n_frames_total, cur_seq_len - tG + 1)
 
-        n_gpus = opt.n_gpus_gen if opt.batchSize == 1 else 1       # number of generator GPUs for each batch
+        n_gpus = max(1, opt.n_gpus_gen) if opt.batchSize == 1 else 1       # number of generator devices for each batch
         n_frames_per_load = opt.max_frames_per_gpu * n_gpus        # number of frames to load into GPUs at one time (for each batch)
         n_frames_per_load = min(n_frames_total, n_frames_per_load)
         n_loadings = n_frames_total // n_frames_per_load           # how many times are needed to load entire sequence into GPUs         

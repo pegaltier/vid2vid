@@ -17,11 +17,11 @@ class Vid2VidModelD(BaseModel):
     def initialize(self, opt):
         BaseModel.initialize(self, opt)        
         gpu_split_id = opt.n_gpus_gen
-        if opt.batchSize == 1:
+        if opt.batchSize == 1 and opt.gpu_ids:
             gpu_split_id += 1
-        self.gpu_ids = ([opt.gpu_ids[0]] + opt.gpu_ids[gpu_split_id:]) if opt.n_gpus_gen != len(opt.gpu_ids) else opt.gpu_ids
+        self.gpu_ids = ([opt.gpu_ids[0]] + opt.gpu_ids[gpu_split_id:]) if (opt.gpu_ids and opt.n_gpus_gen != len(opt.gpu_ids)) else opt.gpu_ids
         if not opt.debug:
-            torch.backends.cudnn.benchmark = True    
+            torch.backends.cudnn.benchmark = bool(opt.gpu_ids)    
         self.tD = opt.n_frames_D  
         self.output_nc = opt.output_nc        
 
@@ -64,7 +64,7 @@ class Vid2VidModelD(BaseModel):
         self.criterionWarp = networks.MaskedL1Loss()
         self.criterionFeat = torch.nn.L1Loss()
         if not opt.no_vgg:
-            self.criterionVGG = networks.VGGLoss(self.gpu_ids[0])
+            self.criterionVGG = networks.VGGLoss(self.gpu_ids[0] if self.gpu_ids else None)
 
         self.loss_names = ['G_VGG', 'G_GAN', 'G_GAN_Feat',                            
                            'D_real', 'D_fake',
@@ -96,7 +96,7 @@ class Vid2VidModelD(BaseModel):
         lambda_T = self.opt.lambda_T
         scale_S = self.opt.n_scales_spatial
         tD = self.opt.n_frames_D
-        if tensors_list[0].get_device() == self.gpu_ids[0]:
+        if not self.gpu_ids or tensors_list[0].get_device() == self.gpu_ids[0]:
             tensors_list = util.remove_dummy_from_tensor(tensors_list, dummy_bs)
             if tensors_list[0].size(0) == 0:                
                 return [self.Tensor(1, 1).fill_(0)] * (len(self.loss_names_T) if scale_T > 0 else len(self.loss_names))

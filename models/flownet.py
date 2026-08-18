@@ -15,8 +15,8 @@ class FlowNet(BaseModel):
         from .flownet2_pytorch.utils import tools as flownet2_tools
         from .flownet2_pytorch.networks.resample2d_package.resample2d import Resample2d
         
-        self.flowNet = flownet2_tools.module_to_dict(flownet2_models)['FlowNet2'](fp16=opt.fp16).cuda(self.gpu_ids[0])        
-        checkpoint = torch.load('models/flownet2_pytorch/FlowNet2_checkpoint.pth.tar')
+        self.flowNet = flownet2_tools.module_to_dict(flownet2_models)['FlowNet2'](fp16=opt.fp16).to(self.device)        
+        checkpoint = torch.load('models/flownet2_pytorch/FlowNet2_checkpoint.pth.tar', map_location=self.device)
         self.flowNet.load_state_dict(checkpoint['state_dict'])
         self.flowNet.eval() 
         self.resample = Resample2d()
@@ -24,7 +24,7 @@ class FlowNet(BaseModel):
 
     def forward(self, input_A, input_B, dummy_bs=0):        
         with torch.no_grad():            
-            if input_A.get_device() == self.gpu_ids[0]:
+            if input_A.device == self.device:
                 input_A, input_B = input_A[dummy_bs:], input_B[dummy_bs:]
                 if input_A.size(0) == 0:
                     b, n, c, h, w = input_A.size()
