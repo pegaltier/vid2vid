@@ -94,7 +94,7 @@ def train():
 
                 if i == 0: fake_B_first = fake_B[0, 0]   # the first generated image in this sequence
 
-            if opt.debug:
+            if opt.debug and opt.gpu_ids:
                 call(["nvidia-smi", "--format=csv", "--query-gpu=memory.used,memory.free"]) 
 
             ############## Display results and errors ##########

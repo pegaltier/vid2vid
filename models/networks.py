@@ -53,8 +53,8 @@ def define_G(input_nc, output_nc, prev_output_nc, ngf, which_model_netG, n_downs
         raise NotImplementedError('Generator model name [%s] is not recognized' % which_model_netG)
 
     #print_network(netG)
-    if len(gpu_ids) > 0:
-        netG.cuda(gpu_ids[0])
+    device = torch.device('cuda:{}'.format(gpu_ids[0])) if gpu_ids else torch.device('cpu')
+    netG.to(device)
     netG.apply(weights_init)
     return netG
 
@@ -62,8 +62,8 @@ def define_D(input_nc, ndf, n_layers_D, norm='instance', num_D=1, getIntermFeat=
     norm_layer = get_norm_layer(norm_type=norm)   
     netD = MultiscaleDiscriminator(input_nc, ndf, n_layers_D, norm_layer, num_D, getIntermFeat)   
     #print_network(netD)
-    if len(gpu_ids) > 0:    
-        netD.cuda(gpu_ids[0])
+    device = torch.device('cuda:{}'.format(gpu_ids[0])) if gpu_ids else torch.device('cpu')
+    netD.to(device)
     netD.apply(weights_init)
     return netD
 
@@ -76,7 +76,7 @@ def print_network(net):
     print(net)
     print('Total number of parameters: %d' % num_params)
 
-def get_grid(batchsize, rows, cols, gpu_id=0, dtype=torch.float32):
+def get_grid(batchsize, rows, cols, device=None, dtype=torch.float32):
     hor = torch.linspace(-1.0, 1.0, cols)
     hor.requires_grad = False
     hor = hor.view(1, 1, 1, cols)
@@ -90,7 +90,9 @@ def get_grid(batchsize, rows, cols, gpu_id=0, dtype=torch.float32):
     t_grid.requires_grad = False
 
     if dtype == torch.float16: t_grid = t_grid.half()
-    return t_grid.cuda(gpu_id)
+    if device is not None:
+        t_grid = t_grid.to(device)
+    return t_grid
 
 ##############################################################################
 # Classes
@@ -108,9 +110,9 @@ class BaseNetwork(nn.Module):
     def resample(self, image, flow):        
         b, c, h, w = image.size()        
         if not hasattr(self, 'grid') or self.grid.size() != flow.size():
-            self.grid = get_grid(b, h, w, gpu_id=flow.get_device(), dtype=flow.dtype)            
+            self.grid = get_grid(b, h, w, device=flow.device, dtype=flow.dtype)            
         flow = torch.cat([flow[:, 0:1, :, :] / ((w - 1.0) / 2.0), flow[:, 1:2, :, :] / ((h - 1.0) / 2.0)], dim=1)        
-        final_grid = (self.grid + flow).permute(0, 2, 3, 1).cuda(image.get_device())
+        final_grid = (self.grid + flow).permute(0, 2, 3, 1).to(image.device)
         output = self.grid_sample(image, final_grid)
         return output
 
@@ -212,11 +214,11 @@ class CompositeGenerator(BaseNetwork):
             flow = self.model_final_flow(flow_feat) * 20
             weight = self.model_final_w(flow_feat)  
 
-        gpu_id = img_feat.get_device()
+        device = img_feat.device
         if use_raw_only or self.no_flow:
             img_final = img_raw
         else:
-            img_warp = self.resample(img_prev[:,-3:,...].cuda(gpu_id), flow).cuda(gpu_id)        
+            img_warp = self.resample(img_prev[:,-3:,...].to(device), flow).to(device)        
             weight_ = weight.expand_as(img_raw)
             img_final = img_raw * weight_ + img_warp * (1-weight_)
         
@@ -225,7 +227,7 @@ class CompositeGenerator(BaseNetwork):
             img_fg_feat = self.indv_up(self.indv_res(self.indv_down(input)))
             img_fg = self.indv_final(img_fg_feat)
 
-            mask = mask.cuda(gpu_id).expand_as(img_raw)            
+            mask = mask.to(device).expand_as(img_raw)            
             img_final = img_fg * mask + img_final * (1-mask) 
             img_raw = img_fg * mask + img_raw * (1-mask)                 
 
@@ -306,11 +308,11 @@ class CompositeLocalGenerator(BaseNetwork):
             flow = self.model_final_flow(flow_feat) * flow_multiplier
             weight = self.model_final_w(flow_feat)
 
-        gpu_id = img_feat.get_device()
+        device = img_feat.device
         if use_raw_only or self.no_flow:
             img_final = img_raw
         else:                                    
-            img_warp = self.resample(img_prev[:,-3:,...].cuda(gpu_id), flow).cuda(gpu_id)
+            img_warp = self.resample(img_prev[:,-3:,...].to(device), flow).to(device)
             weight_ = weight.expand_as(img_raw)
             img_final = img_raw * weight_ + img_warp * (1-weight_)
 
@@ -318,7 +320,7 @@ class CompositeLocalGenerator(BaseNetwork):
         if self.use_fg_model:
             img_fg_feat = self.indv_up(self.indv_down(input) + img_fg_feat_coarse)        
             img_fg = self.indv_final(img_fg_feat)
-            mask = mask.cuda(gpu_id).expand_as(img_raw)
+            mask = mask.to(device).expand_as(img_raw)
             img_final = img_fg * mask + img_final * (1-mask)
             img_raw = img_fg * mask + img_raw * (1-mask)         
 
@@ -744,20 +746,19 @@ class GANLoss(nn.Module):
 
     def get_target_tensor(self, input, target_is_real):
         target_tensor = None        
-        gpu_id = input.get_device()
         if target_is_real:
             create_label = ((self.real_label_var is None) or
                             (self.real_label_var.numel() != input.numel()))
             if create_label:
-                real_tensor = self.Tensor(input.size()).cuda(gpu_id).fill_(self.real_label)
-                self.real_label_var = Variable(real_tensor, requires_grad=False)
+                real_tensor = self.Tensor(input.size()).fill_(self.real_label)
+                self.real_label_var = Variable(real_tensor.to(input.device), requires_grad=False)
             target_tensor = self.real_label_var
         else:
             create_label = ((self.fake_label_var is None) or
                             (self.fake_label_var.numel() != input.numel()))
             if create_label:
-                fake_tensor = self.Tensor(input.size()).cuda(gpu_id).fill_(self.fake_label)
-                self.fake_label_var = Variable(fake_tensor, requires_grad=False)
+                fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
+                self.fake_label_var = Variable(fake_tensor.to(input.device), requires_grad=False)
             target_tensor = self.fake_label_var
         return target_tensor
 
@@ -774,9 +775,10 @@ class GANLoss(nn.Module):
             return self.loss(input[-1], target_tensor)
 
 class VGGLoss(nn.Module):
-    def __init__(self, gpu_id=0):
-        super(VGGLoss, self).__init__()        
-        self.vgg = Vgg19().cuda(gpu_id)
+    def __init__(self, gpu_id=None):
+        super(VGGLoss, self).__init__()
+        device = torch.device('cuda:{}'.format(gpu_id)) if gpu_id is not None else torch.device('cpu')
+        self.vgg = Vgg19().to(device)
         self.criterion = nn.L1Loss()
         self.weights = [1.0/32, 1.0/16, 1.0/8, 1.0/4, 1.0]
         self.downsample = nn.AvgPool2d(2, stride=2, count_include_pad=False)

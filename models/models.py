@@ -8,7 +8,7 @@ import fractions
 def lcm(a,b): return abs(a * b)/fractions.gcd(a,b) if a and b else 0
 
 def wrap_model(opt, modelG, modelD, flowNet):
-    if opt.n_gpus_gen == len(opt.gpu_ids):
+    if not opt.gpu_ids or opt.n_gpus_gen == len(opt.gpu_ids):
         modelG = myModel(opt, modelG)
         modelD = myModel(opt, modelD)
         flowNet = myModel(opt, flowNet)
@@ -28,9 +28,13 @@ class myModel(nn.Module):
         super(myModel, self).__init__()
         self.opt = opt
         self.module = model
-        self.model = nn.DataParallel(model, device_ids=opt.gpu_ids)
-        self.bs_per_gpu = int(np.ceil(float(opt.batchSize) / len(opt.gpu_ids))) # batch size for each GPU
-        self.pad_bs = self.bs_per_gpu * len(opt.gpu_ids) - opt.batchSize           
+        if opt.gpu_ids:
+            self.model = nn.DataParallel(model, device_ids=opt.gpu_ids)
+            self.bs_per_gpu = int(np.ceil(float(opt.batchSize) / len(opt.gpu_ids)))
+        else:
+            self.model = model
+            self.bs_per_gpu = opt.batchSize
+        self.pad_bs = self.bs_per_gpu * max(1, len(opt.gpu_ids)) - opt.batchSize           
 
     def forward(self, *inputs, **kwargs):
         inputs = self.add_dummy_to_tensor(inputs, self.pad_bs)
@@ -118,7 +122,7 @@ def init_params(opt, modelG, modelD, data_loader):
             data_loader.dataset.update_training_batch((start_epoch-1)//opt.niter_step)
             modelG.module.update_training_batch((start_epoch-1)//opt.niter_step)    
 
-    n_gpus = opt.n_gpus_gen if opt.batchSize == 1 else 1   # number of gpus used for generator for each batch
+    n_gpus = max(1, opt.n_gpus_gen) if opt.batchSize == 1 else 1   # number of devices used for generator for each batch
     tG, tD = opt.n_frames_G, opt.n_frames_D
     tDB = tD * opt.output_nc        
     s_scales = opt.n_scales_spatial

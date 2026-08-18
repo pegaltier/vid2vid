@@ -24,7 +24,7 @@ class BaseOptions():
         self.parser.add_argument('--n_blocks', type=int, default=9, help='number of resnet blocks in generator')
         self.parser.add_argument('--n_downsample_G', type=int, default=3, help='number of downsampling layers in netG')        
 
-        self.parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+        self.parser.add_argument('--gpu_ids', type=str, default='-1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
         self.parser.add_argument('--n_gpus_gen', type=int, default=-1, help='how many gpus are used for generator (the rest are used for discriminator). -1 means use all gpus')
         self.parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
         self.parser.add_argument('--dataset_mode', type=str, default='temporal', help='chooses how datasets are loaded. [unaligned | aligned | single]')
@@ -103,10 +103,15 @@ class BaseOptions():
         self.opt.gpu_ids = self.parse_str(self.opt.gpu_ids)
         if self.opt.n_gpus_gen == -1:
             self.opt.n_gpus_gen = len(self.opt.gpu_ids)
-        
-        # set gpu ids
-        if len(self.opt.gpu_ids) > 0:
+
+        # set device and gpu ids
+        if len(self.opt.gpu_ids) > 0 and torch.cuda.is_available():
             torch.cuda.set_device(self.opt.gpu_ids[0])
+            self.opt.device = torch.device('cuda:{}'.format(self.opt.gpu_ids[0]))
+        else:
+            self.opt.gpu_ids = []
+            self.opt.n_gpus_gen = 0
+            self.opt.device = torch.device('cpu')
 
         args = vars(self.opt)
 
